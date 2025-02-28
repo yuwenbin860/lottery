@@ -1,0 +1,57 @@
+{
+  "data_sources": {
+    "ssq": {
+      "url": "https://www.cwl.gov.cn/ygkj/wqkjgg/ssq/",
+      "name": "双色球"
+    },
+    "dlt": {
+      "url": "https://www.lottery.gov.cn/kj/kjlb.html?dlt",
+      "name": "大乐透"
+    }
+  },
+  "crawler": {
+    "user_agents": [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15"
+    ],
+    "request_delay": 5,
+    "max_retries": 3
+  },
+  "prediction": {
+    "algorithms": {
+      "hot": {
+        "name": "热号加权随机",
+        "description": "从最近高频出现的号码中加权随机选择",
+        "params": {
+          "period": 50,
+          "weight_factor": 1.5
+        }
+      },
+      "cold": {
+        "name": "冷号补偿模型",
+        "description": "优先选择长期未出现的号码",
+        "params": {
+          "threshold": 20,
+          "max_cold_numbers": 2
+        }
+      },
+      "freq": {
+        "name": "频率分析模型",
+        "description": "基于历史频率分析预测",
+        "params": {
+          "period": "all"
+        }
+      }
+    },
+    "default_algorithm": "hot"
+  },
+  "storage": {
+    "data_dir": "data",
+    "file_format": "csv"
+  },
+  "visualization": {
+    "default_dpi": 300,
+    "default_figsize": [10, 6]
+  }
+}
