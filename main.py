@@ -231,6 +231,10 @@ def format_prediction_result(result):
     primary_balls = result.get('primary_balls', [])
     secondary_balls = result.get('secondary_balls', [])
 
+    # 检查是否由回测选择了算法
+    if 'best_algorithm' in result:
+        algorithm = f"{algorithm} (由回测选择的最佳算法)"
+
     output = [
         f"彩票类型: {lottery_type.upper()}",
         f"预测算法: {algorithm}",
@@ -241,6 +245,90 @@ def format_prediction_result(result):
     ]
 
     return "\n".join(output)
+
+
+def print_backtest_result(result):
+    """格式化输出回测结果"""
+    print(f"\n=== {result['lottery_type'].upper()} 回测结果 (算法: {result['algorithm']}) ===\n")
+    print(f"回测期数: {result['total_issues']}")
+    print(f"中奖率: {result['winning_rate']:.2f}%")
+    print(f"总奖金: ¥{result['total_prize']:.2f}")
+    print(f"平均奖金: ¥{result['avg_prize']:.2f}")
+    print(f"平均主区匹配: {result['avg_primary_match']:.2f} 个")
+    print(f"平均副区匹配: {result['avg_secondary_match']:.2f} 个")
+
+    print("\n奖级统计:")
+    for level, count in result['prize_levels'].items():
+        percent = (count / result['total_issues']) * 100
+        print(f"  {level}: {count} 期 ({percent:.2f}%)")
+
+    print("\n详细回测记录:")
+    for r in result['detailed_results']:
+        prize_str = f"¥{r['prize']}" if r['prize'] > 0 else "未中奖"
+        match_str = f"{r['primary_match_count']}+{r['secondary_match_count']}"
+        print(f"期号: {r['issue']} | 预测: {r['predicted_primary']}+{r['predicted_secondary']} | "
+              f"开奖: {r['actual_primary']}+{r['actual_secondary']} | 匹配: {match_str} | 奖金: {prize_str}")
+
+
+def print_algorithm_comparison(result):
+    """格式化输出算法比较结果"""
+    print("\n=== 算法表现比较 ===\n")
+
+    # 提取所有算法的综合得分
+    print("综合评分:")
+    for algo, score in result['scores'].items():
+        best_mark = " (最佳)" if algo == result['best_algorithm'] else ""
+        print(f"  {algo}: {score:.2f}{best_mark}")
+
+    # 打印详细指标比较
+    print("\n详细指标比较:")
+    metrics = ["winning_rate", "avg_prize", "avg_primary_match", "avg_secondary_match"]
+    metric_names = {"winning_rate": "中奖率 (%)", "avg_prize": "平均奖金 (¥)",
+                    "avg_primary_match": "平均主区匹配", "avg_secondary_match": "平均副区匹配"}
+
+    # 打印表头
+    print(f"{'指标':<15} | ", end="")
+    for algo in result['scores'].keys():
+        print(f"{algo:<10} | ", end="")
+    print()
+    print("-" * 50)
+
+    # 打印各指标
+    for metric in metrics:
+        print(f"{metric_names[metric]:<15} | ", end="")
+        for algo in result['scores'].keys():
+            value = result['comparison'][algo][metric]
+            if metric == "winning_rate":
+                print(f"{value:.2f}%      | ", end="")
+            elif metric == "avg_prize":
+                print(f"{value:.2f}      | ", end="")
+            else:
+                print(f"{value:.2f}      | ", end="")
+        print()
+
+    # 打印奖级分布
+    print("\n各算法中奖分布:")
+    all_levels = set()
+    for algo in result['scores'].keys():
+        all_levels.update(result['comparison'][algo]['prize_levels'].keys())
+
+    sorted_levels = sorted(all_levels, key=lambda x: 0 if x == "未中奖" else int(x[0]))
+
+    # 打印表头
+    print(f"{'奖级':<10} | ", end="")
+    for algo in result['scores'].keys():
+        print(f"{algo:<10} | ", end="")
+    print()
+    print("-" * 50)
+
+    # 打印各奖级数据
+    for level in sorted_levels:
+        print(f"{level:<10} | ", end="")
+        for algo in result['scores'].keys():
+            count = result['comparison'][algo]['prize_levels'].get(level, 0)
+            percent = (count / result['comparison'][algo]['total_issues']) * 100
+            print(f"{count} ({percent:.1f}%) | ", end="")
+        print()
 
 
 def main():
@@ -269,6 +357,12 @@ def main():
     predict_parser = subparsers.add_parser('predict', help='生成预测结果')
     predict_parser.add_argument('-t', '--type', required=True, choices=['ssq', 'dlt'], help='彩票类型')
     predict_parser.add_argument('-a', '--algorithm', choices=['hot', 'cold', 'freq'], help='预测算法')
+    # 预测命令的选项
+    predict_parser.add_argument('-b', '--backtest', action='store_true', help='执行回测以评估预测准确率')
+    predict_parser.add_argument('-B', '--best', action='store_true', help='使用历史表现最好的算法')
+    predict_parser.add_argument('-p', '--periods', type=int, default=10, help='回测/评估的历史期数')
+    predict_parser.add_argument('-i', '--issue', type=str, help='为指定期号预测（历史预测）')
+    predict_parser.add_argument('-c', '--compare', action='store_true', help='比较所有算法的表现')
 
     # backtest 命令
     backtest_parser = subparsers.add_parser('backtest', help='回测算法有效性')
@@ -359,14 +453,86 @@ def main():
         else:
             print(f"无法获取{args.type}的{args.analysis}分析结果")
 
-    elif args.command == 'predict':
-        # 生成预测结果
-        result = system.predict(args.type, args.algorithm)
 
-        if result:
-            print("\n" + format_prediction_result(result))
+    # 在处理predict命令的部分修改
+
+    # 处理命令
+
+    elif args.command == 'predict':
+        if args.backtest:
+            # 首先加载数据
+            data = system.storage.load_lottery_data(args.type)
+            if data.empty:
+                print(f"没有{args.type}数据可供回测")
+            else:
+                # 设置数据到预测器
+                system.predictor.set_data(data)
+                # 执行回测
+                result = system.predictor.backtest(args.type, algorithm=args.algorithm, periods=args.periods)
+                if result:
+                    print_backtest_result(result)
+                else:
+                    print(f"无法执行{args.type}的回测")
+        elif args.compare:
+            # 比较算法
+            # 首先加载数据
+            data = system.storage.load_lottery_data(args.type)
+            if data.empty:
+                print(f"没有{args.type}数据可供比较算法")
+            else:
+                system.predictor.set_data(data)
+                result = system.predictor.compare_algorithms(args.type, periods=args.periods)
+                if result:
+                    print_algorithm_comparison(result)
+                else:
+                    print(f"无法比较{args.type}的算法表现")
+        elif args.issue:
+            # 针对特定期号的历史预测
+            # 首先加载数据
+            data = system.storage.load_lottery_data(args.type)
+            if data.empty:
+                print(f"没有{args.type}数据可供预测")
+            else:
+                system.predictor.set_data(data)
+                result = system.predictor.predict_for_issue(args.type, args.issue, args.algorithm)
+                if result:
+                    print("\n" + format_prediction_result(result))
+                else:
+                    print(f"无法为{args.type}的{args.issue}期生成预测")
+        elif args.best:
+            # 使用历史最佳算法预测
+            # 首先加载数据
+            data = system.storage.load_lottery_data(args.type)
+            if data.empty:
+                print(f"没有{args.type}数据可供预测")
+            else:
+                system.predictor.set_data(data)
+                result = system.predictor.predict_best(args.type, args.periods)
+                if result:
+                    print("\n" + format_prediction_result(result))
+                    print("\n算法评估结果:")
+                    for algo, score in result['algorithm_comparison']['algorithm_scores'].items():
+                        mark = " (已选择)" if algo == result['algorithm_comparison']['best_algorithm'] else ""
+                        print(f"  {algo}: {score:.2f}{mark}")
+                else:
+                    print(f"无法生成{args.type}的预测结果")
         else:
-            print(f"无法生成{args.type}的预测结果")
+            # 常规预测
+            # 加载数据
+            data = system.storage.load_lottery_data(args.type)
+            if data.empty:
+                print(f"没有{args.type}数据可供预测")
+            else:
+                # 设置数据
+                system.predictor.set_data(data)
+                # 执行预测
+                result = system.predict(args.type, args.algorithm)
+                if result:
+                    print("\n" + format_prediction_result(result))
+                else:
+                    print(f"无法生成{args.type}的预测结果")
+
+
 
     elif args.command == 'backtest':
         # 回测算法

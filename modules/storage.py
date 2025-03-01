@@ -118,18 +118,41 @@ class LotteryStorage:
         """从CSV文件加载彩票数据"""
         file_path = os.path.join(self.data_dir, f"{lottery_type}.csv")
 
+        print(f"尝试加载数据文件: {file_path}")
+
         if not os.path.exists(file_path):
+            print(f"错误：数据文件不存在: {file_path}")
             logger.warning(f"数据文件不存在: {file_path}")
             return pd.DataFrame()
 
         try:
+            # 检查文件是否为空
+            if os.path.getsize(file_path) == 0:
+                print(f"错误：数据文件为空: {file_path}")
+                logger.warning(f"数据文件为空: {file_path}")
+                return pd.DataFrame()
+
             # 使用pandas读取CSV文件
             df = pd.read_csv(file_path)
+
+            # 检查记录数
+            if len(df) == 0:
+                print(f"错误：数据文件不包含任何记录: {file_path}")
+                logger.warning(f"数据文件不包含任何记录: {file_path}")
+                return pd.DataFrame()
+
+            print(f"成功加载 {len(df)} 条{lottery_type}记录")
             logger.info(f"成功加载 {len(df)} 条{lottery_type}记录")
+
             return df
         except Exception as e:
+            print(f"错误：加载数据失败: {str(e)}")
             logger.error(f"加载数据失败: {str(e)}")
-            raise
+            import traceback
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            logger.error(traceback_str)
+            return pd.DataFrame()
 
     def save_prediction(self, lottery_type, algorithm, prediction_data):
         """保存预测结果"""
